@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, codex/extended-delivery]
+    branches: [main, feature/extended-delivery]
   pull_request:
 
 permissions:
