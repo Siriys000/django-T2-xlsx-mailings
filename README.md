@@ -1,4 +1,4 @@
-# django-T2-xlsx-mailings
+# Импорт рассылок из XLSX
 
 [![CI](https://github.com/Siriys000/django-T2-xlsx-mailings/actions/workflows/ci.yml/badge.svg)](https://github.com/Siriys000/django-T2-xlsx-mailings/actions/workflows/ci.yml)
 
@@ -13,7 +13,7 @@ Management command потоково читает активный лист XLSX,
 идемпотентно сохраняет строки, после чего последовательно имитирует отправку
 новых писем. Ошибка отдельной строки не прерывает обработку файла.
 
-## Требования
+## Технологии
 
 - Python 3.10+
 - Django 5.2
@@ -107,7 +107,3 @@ python manage.py test
 Тестовые XLSX создаются во временных каталогах во время запуска и не хранятся
 в репозитории. Эти же проверки, Django system checks, проверка миграций и
 зависимостей автоматически выполняются в GitHub Actions на Python 3.10 и 3.12.
-
-## Назначение
-
-Учебный проект.
