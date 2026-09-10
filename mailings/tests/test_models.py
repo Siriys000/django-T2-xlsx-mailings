@@ -1,6 +1,7 @@
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
+from django.utils import timezone
 
 from mailings.models import MailingMessage
 
@@ -28,6 +29,13 @@ class MailingMessageModelTests(TestCase):
         self.assertEqual(mailing.email, "recipient@example.com")
         self.assertEqual(mailing.subject, "Important update")
         self.assertEqual(mailing.message, "Message body")
+        self.assertEqual(
+            mailing.delivery_status,
+            MailingMessage.DeliveryStatus.PENDING,
+        )
+        self.assertEqual(mailing.delivery_attempts, 0)
+        self.assertEqual(mailing.last_delivery_error, "")
+        self.assertIsNone(mailing.sent_at)
 
     def test_external_id_is_unique(self):
         MailingMessage.objects.create(**self.valid_data())
@@ -69,3 +77,23 @@ class MailingMessageModelTests(TestCase):
             mailing.full_clean()
 
         self.assertIn("user_id", raised.exception.message_dict)
+
+    def test_delivery_status_and_sent_timestamp_must_match(self):
+        invalid_values = [
+            {
+                "delivery_status": MailingMessage.DeliveryStatus.SENT,
+                "sent_at": None,
+            },
+            {
+                "delivery_status": MailingMessage.DeliveryStatus.PENDING,
+                "sent_at": timezone.now(),
+            },
+        ]
+
+        for overrides in invalid_values:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(IntegrityError), transaction.atomic():
+                    MailingMessage.objects.create(
+                        **self.valid_data(external_id=str(overrides)),
+                        **overrides,
+                    )

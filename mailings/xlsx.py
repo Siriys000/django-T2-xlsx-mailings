@@ -84,7 +84,7 @@ def build_mailing_message(row_data: Mapping[str, object]) -> MailingMessage:
         subject=_normalize_text(row_data.get("subject"), "subject"),
         message=_normalize_text(row_data.get("message"), "message", strip=False),
     )
-    mailing.full_clean(validate_unique=False)
+    mailing.full_clean(validate_unique=False, validate_constraints=False)
     return mailing
 
 
