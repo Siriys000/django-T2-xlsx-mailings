@@ -98,7 +98,7 @@ Import completed: processed=10, created=7, skipped=2, errors=1
 ## Расширенный вариант
 
 Отдельная ветка
-[`codex/extended-delivery`](https://github.com/Siriys000/django-T2-xlsx-mailings/tree/codex/extended-delivery)
+[`feature/extended-delivery`](https://github.com/Siriys000/django-T2-xlsx-mailings/tree/feature/extended-delivery)
 демонстрирует состояния доставки, сохранение результатов попыток, ограниченные
 повторные попытки, пакетную параллельную отправку и команду восстановления
 `retry_mailings`. Расширение не объединено с `main`, чтобы основная ветка
