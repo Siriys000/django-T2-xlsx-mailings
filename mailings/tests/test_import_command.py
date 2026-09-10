@@ -7,6 +7,11 @@ from unittest.mock import patch
 from django.core.management import CommandError, call_command
 from django.test import TestCase
 
+from mailings.delivery import (
+    MAX_SEND_DELAY_SECONDS,
+    MIN_SEND_DELAY_SECONDS,
+    send_email,
+)
 from mailings.models import MailingMessage
 from mailings.tests.xlsx_helpers import corrupt_worksheet_xml, write_workbook
 
@@ -104,6 +109,34 @@ class ImportMailingsCommandTests(TestCase):
         self.mocked_send_email.assert_called_once_with(mailing)
         self.assertIn("processed=2, created=1, skipped=1, errors=0", stdout)
 
+    def test_normalizes_external_id_but_keeps_it_case_sensitive(self):
+        existing = MailingMessage.objects.create(
+            external_id="mailing-001",
+            user_id=1,
+            email="original@example.com",
+            subject="Original",
+            message="Original message",
+        )
+        path = self.write_workbook(
+            [
+                HEADERS,
+                [" mailing-001 ", 2, "two@example.com", "Second", "Message two"],
+                ["MAILING-001", 3, "three@example.com", "Third", "Message three"],
+            ]
+        )
+
+        stdout, _ = self.run_command(path)
+
+        self.assertEqual(
+            set(MailingMessage.objects.values_list("external_id", flat=True)),
+            {"mailing-001", "MAILING-001"},
+        )
+        existing.refresh_from_db()
+        self.assertEqual(existing.email, "original@example.com")
+        created = MailingMessage.objects.get(external_id="MAILING-001")
+        self.mocked_send_email.assert_called_once_with(created)
+        self.assertIn("processed=2, created=1, skipped=1, errors=0", stdout)
+
     def test_invalid_row_does_not_stop_import_or_expose_message(self):
         path = self.write_workbook(
             [
@@ -172,6 +205,16 @@ class ImportMailingsCommandTests(TestCase):
         with self.assertRaisesRegex(CommandError, "empty"):
             self.run_command(path)
 
+    def test_header_only_workbook_reports_zero_counters(self):
+        path = self.write_workbook([HEADERS])
+
+        stdout, stderr = self.run_command(path)
+
+        self.assertEqual(stderr, "")
+        self.assertIn("processed=0, created=0, skipped=0, errors=0", stdout)
+        self.assertFalse(MailingMessage.objects.exists())
+        self.mocked_send_email.assert_not_called()
+
     def test_lazy_xml_error_raises_command_error_after_completed_rows(self):
         source = self.write_workbook(
             [
@@ -221,3 +264,53 @@ class ImportMailingsCommandTests(TestCase):
             f"processed={row_count}, created={row_count}, skipped=0, errors=0",
             stdout,
         )
+
+    def test_delivery_failure_aborts_without_summary_but_keeps_created_message(self):
+        path = self.write_workbook(
+            [
+                HEADERS,
+                ["mailing-001", 1, "one@example.com", "First", "Message"],
+            ]
+        )
+        stdout = StringIO()
+        stderr = StringIO()
+        self.mocked_send_email.side_effect = RuntimeError("delivery failed")
+
+        with self.assertRaisesRegex(RuntimeError, "delivery failed"):
+            call_command("import_mailings", path, stdout=stdout, stderr=stderr)
+
+        self.assertTrue(
+            MailingMessage.objects.filter(external_id="mailing-001").exists()
+        )
+        self.assertNotIn("Import completed", stdout.getvalue())
+
+    def test_command_calls_real_delivery_function_without_waiting(self):
+        path = self.write_workbook(
+            [
+                HEADERS,
+                ["mailing-001", 1, "one@example.com", "First", "Message"],
+            ]
+        )
+        self.mocked_send_email.side_effect = send_email
+
+        with (
+            patch(
+                "mailings.delivery.randint",
+                return_value=MIN_SEND_DELAY_SECONDS,
+            ) as mocked_randint,
+            patch("mailings.delivery.sleep") as mocked_sleep,
+            self.assertLogs("mailings.delivery", level="INFO") as captured_logs,
+        ):
+            stdout, stderr = self.run_command(path)
+
+        mocked_randint.assert_called_once_with(
+            MIN_SEND_DELAY_SECONDS,
+            MAX_SEND_DELAY_SECONDS,
+        )
+        mocked_sleep.assert_called_once_with(MIN_SEND_DELAY_SECONDS)
+        self.assertEqual(
+            captured_logs.output,
+            ["INFO:mailings.delivery:Email sent: external_id=mailing-001"],
+        )
+        self.assertEqual(stderr, "")
+        self.assertIn("processed=1, created=1, skipped=0, errors=0", stdout)
