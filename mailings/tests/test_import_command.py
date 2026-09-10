@@ -22,9 +22,7 @@ class ImportMailingsCommandTests(TestCase):
     def setUp(self):
         self.temp_directory = TemporaryDirectory()
         self.addCleanup(self.temp_directory.cleanup)
-        send_email_patcher = patch(
-            "mailings.management.commands.import_mailings.send_email"
-        )
+        send_email_patcher = patch("mailings.delivery.send_email")
         self.mocked_send_email = send_email_patcher.start()
         self.addCleanup(send_email_patcher.stop)
 
@@ -51,16 +49,24 @@ class ImportMailingsCommandTests(TestCase):
 
         self.assertEqual(MailingMessage.objects.count(), 2)
         sent_messages = [call.args[0] for call in self.mocked_send_email.call_args_list]
-        self.assertEqual(
+        self.assertCountEqual(
             [mailing.external_id for mailing in sent_messages],
             ["mailing-001", "mailing-002"],
         )
         self.assertTrue(all(mailing.pk for mailing in sent_messages))
+        self.assertFalse(
+            MailingMessage.objects.exclude(
+                delivery_status=MailingMessage.DeliveryStatus.SENT,
+                delivery_attempts=1,
+                sent_at__isnull=False,
+            ).exists()
+        )
         self.assertEqual(stderr, "")
         self.assertIn(
             "Import completed: processed=2, created=2, skipped=0, errors=0",
             stdout,
         )
+        self.assertIn("sent=2, send_failed=0, attempts=2, retries=0", stdout)
 
     def test_reimport_skips_existing_message_without_overwriting_it(self):
         existing = MailingMessage.objects.create(
@@ -92,6 +98,7 @@ class ImportMailingsCommandTests(TestCase):
         self.assertEqual(existing.message, "Original message")
         self.mocked_send_email.assert_not_called()
         self.assertIn("processed=1, created=0, skipped=1, errors=0", stdout)
+        self.assertIn("sent=0, send_failed=0, attempts=0, retries=0", stdout)
 
     def test_duplicate_inside_file_is_created_once(self):
         path = self.write_workbook(
@@ -235,7 +242,12 @@ class ImportMailingsCommandTests(TestCase):
             list(MailingMessage.objects.values_list("external_id", flat=True)),
             ["mailing-001"],
         )
-        self.assertEqual(self.mocked_send_email.call_count, 1)
+        mailing = MailingMessage.objects.get()
+        self.assertEqual(
+            mailing.delivery_status,
+            MailingMessage.DeliveryStatus.PENDING,
+        )
+        self.mocked_send_email.assert_not_called()
         corrupted.unlink()
 
     def test_imports_generated_large_workbook(self):
@@ -264,25 +276,34 @@ class ImportMailingsCommandTests(TestCase):
             f"processed={row_count}, created={row_count}, skipped=0, errors=0",
             stdout,
         )
+        self.assertIn(
+            f"sent={row_count}, send_failed=0, attempts={row_count}, retries=0",
+            stdout,
+        )
 
-    def test_delivery_failure_aborts_without_summary_but_keeps_created_message(self):
+    def test_delivery_failure_is_retried_and_reported(self):
         path = self.write_workbook(
             [
                 HEADERS,
                 ["mailing-001", 1, "one@example.com", "First", "Message"],
             ]
         )
-        stdout = StringIO()
-        stderr = StringIO()
         self.mocked_send_email.side_effect = RuntimeError("delivery failed")
 
-        with self.assertRaisesRegex(RuntimeError, "delivery failed"):
-            call_command("import_mailings", path, stdout=stdout, stderr=stderr)
+        with patch("mailings.delivery.logger.warning"):
+            stdout, stderr = self.run_command(path)
 
-        self.assertTrue(
-            MailingMessage.objects.filter(external_id="mailing-001").exists()
+        mailing = MailingMessage.objects.get(external_id="mailing-001")
+        self.assertEqual(
+            mailing.delivery_status,
+            MailingMessage.DeliveryStatus.FAILED,
         )
-        self.assertNotIn("Import completed", stdout.getvalue())
+        self.assertEqual(mailing.delivery_attempts, 3)
+        self.assertEqual(mailing.last_delivery_error, "RuntimeError")
+        self.assertIsNone(mailing.sent_at)
+        self.assertEqual(self.mocked_send_email.call_count, 3)
+        self.assertEqual(stderr, "")
+        self.assertIn("sent=0, send_failed=1, attempts=3, retries=2", stdout)
 
     def test_command_calls_real_delivery_function_without_waiting(self):
         path = self.write_workbook(

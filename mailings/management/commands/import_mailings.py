@@ -3,7 +3,7 @@ from pathlib import Path
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from mailings.delivery import send_email
+from mailings.delivery import DELIVERY_BATCH_SIZE, DeliveryStats, deliver_batch
 from mailings.models import MailingMessage
 from mailings.xlsx import XlsxFormatError, build_mailing_message, iter_xlsx_rows
 
@@ -23,6 +23,8 @@ class Command(BaseCommand):
         created = 0
         skipped = 0
         errors = 0
+        delivery_stats = DeliveryStats()
+        pending_batch: list[MailingMessage] = []
 
         try:
             rows = iter_xlsx_rows(options["xlsx_file"])
@@ -49,18 +51,27 @@ class Command(BaseCommand):
                 )
                 if was_created:
                     created += 1
-                    send_email(stored_mailing)
+                    pending_batch.append(stored_mailing)
+                    if len(pending_batch) >= DELIVERY_BATCH_SIZE:
+                        delivery_stats += deliver_batch(pending_batch)
+                        pending_batch.clear()
                 else:
                     skipped += 1
         except XlsxFormatError as exc:
             raise CommandError(str(exc)) from exc
+
+        delivery_stats += deliver_batch(pending_batch)
 
         self.stdout.write(
             "Import completed: "
             f"processed={processed}, "
             f"created={created}, "
             f"skipped={skipped}, "
-            f"errors={errors}"
+            f"errors={errors}, "
+            f"sent={delivery_stats.sent}, "
+            f"send_failed={delivery_stats.failed}, "
+            f"attempts={delivery_stats.attempts}, "
+            f"retries={delivery_stats.retries}"
         )
 
 
