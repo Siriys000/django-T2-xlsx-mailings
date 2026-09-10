@@ -6,6 +6,7 @@ from django.test import SimpleTestCase
 from openpyxl import Workbook
 
 from mailings.models import MailingMessage
+from mailings.tests.xlsx_helpers import corrupt_worksheet_xml, write_workbook
 from mailings.xlsx import XlsxFormatError, build_mailing_message, iter_xlsx_rows
 
 
@@ -19,13 +20,7 @@ class XlsxReaderTests(SimpleTestCase):
 
     def write_workbook(self, rows, filename="mailings.xlsx"):
         path = Path(self.temp_directory.name) / filename
-        workbook = Workbook()
-        worksheet = workbook.active
-        for row in rows:
-            worksheet.append(row)
-        workbook.save(path)
-        workbook.close()
-        return path
+        return write_workbook(path, rows)
 
     def test_reads_headers_in_any_order_and_ignores_extra_columns(self):
         path = self.write_workbook(
@@ -132,6 +127,25 @@ class XlsxReaderTests(SimpleTestCase):
 
         with self.assertRaises(XlsxFormatError):
             list(iter_xlsx_rows(path))
+
+    def test_wraps_lazy_xml_error_and_releases_file(self):
+        source = self.write_workbook(
+            [
+                HEADERS,
+                ["mailing-001", 1, "one@example.com", "First", "Message"],
+            ],
+            filename="source.xlsx",
+        )
+        corrupted = corrupt_worksheet_xml(
+            source,
+            Path(self.temp_directory.name) / "corrupted.xlsx",
+        )
+
+        with self.assertRaises(XlsxFormatError):
+            list(iter_xlsx_rows(corrupted))
+
+        corrupted.unlink()
+        self.assertFalse(corrupted.exists())
 
 
 class MailingRowValidationTests(SimpleTestCase):

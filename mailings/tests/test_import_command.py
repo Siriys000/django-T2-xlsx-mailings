@@ -1,13 +1,13 @@
 from io import StringIO
+from itertools import chain
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
 from django.test import TestCase
-from openpyxl import Workbook
-
 from mailings.models import MailingMessage
+from mailings.tests.xlsx_helpers import corrupt_worksheet_xml, write_workbook
 
 
 HEADERS = ["external_id", "user_id", "email", "subject", "message"]
@@ -23,15 +23,9 @@ class ImportMailingsCommandTests(TestCase):
         self.mocked_send_email = send_email_patcher.start()
         self.addCleanup(send_email_patcher.stop)
 
-    def write_workbook(self, rows):
-        path = Path(self.temp_directory.name) / "mailings.xlsx"
-        workbook = Workbook()
-        worksheet = workbook.active
-        for row in rows:
-            worksheet.append(row)
-        workbook.save(path)
-        workbook.close()
-        return path
+    def write_workbook(self, rows, filename="mailings.xlsx", *, write_only=False):
+        path = Path(self.temp_directory.name) / filename
+        return write_workbook(path, rows, write_only=write_only)
 
     def run_command(self, path):
         stdout = StringIO()
@@ -160,3 +154,72 @@ class ImportMailingsCommandTests(TestCase):
 
         self.assertFalse(MailingMessage.objects.exists())
         self.mocked_send_email.assert_not_called()
+
+    def test_missing_file_raises_command_error(self):
+        path = Path(self.temp_directory.name) / "missing.xlsx"
+
+        with self.assertRaises(CommandError):
+            self.run_command(path)
+
+    def test_wrong_extension_raises_command_error(self):
+        path = Path(self.temp_directory.name) / "mailings.xls"
+        path.touch()
+
+        with self.assertRaisesRegex(CommandError, r"\.xlsx"):
+            self.run_command(path)
+
+    def test_empty_active_sheet_raises_command_error(self):
+        path = self.write_workbook([])
+
+        with self.assertRaisesRegex(CommandError, "empty"):
+            self.run_command(path)
+
+    def test_lazy_xml_error_raises_command_error_after_completed_rows(self):
+        source = self.write_workbook(
+            [
+                HEADERS,
+                ["mailing-001", 1, "one@example.com", "First", "Message"],
+            ],
+            filename="source.xlsx",
+        )
+        corrupted = corrupt_worksheet_xml(
+            source,
+            Path(self.temp_directory.name) / "corrupted.xlsx",
+        )
+
+        with self.assertRaises(CommandError):
+            self.run_command(corrupted)
+
+        self.assertEqual(
+            list(MailingMessage.objects.values_list("external_id", flat=True)),
+            ["mailing-001"],
+        )
+        self.assertEqual(self.mocked_send_email.call_count, 1)
+        corrupted.unlink()
+
+    def test_imports_generated_large_workbook(self):
+        row_count = 2_000
+        rows = (
+            [
+                f"mailing-{number}",
+                number,
+                f"user{number}@example.com",
+                "Subject",
+                "Message",
+            ]
+            for number in range(1, row_count + 1)
+        )
+        path = self.write_workbook(
+            chain([HEADERS], rows),
+            write_only=True,
+        )
+
+        stdout, stderr = self.run_command(path)
+
+        self.assertEqual(MailingMessage.objects.count(), row_count)
+        self.assertEqual(self.mocked_send_email.call_count, row_count)
+        self.assertEqual(stderr, "")
+        self.assertIn(
+            f"processed={row_count}, created={row_count}, skipped=0, errors=0",
+            stdout,
+        )

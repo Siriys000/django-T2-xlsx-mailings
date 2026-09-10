@@ -1,5 +1,6 @@
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
+from xml.etree.ElementTree import ParseError
 from zipfile import BadZipFile
 
 from django.core.exceptions import ValidationError
@@ -16,6 +17,16 @@ REQUIRED_HEADERS = (
     "message",
 )
 
+WORKBOOK_READ_ERRORS = (
+    BadZipFile,
+    InvalidFileException,
+    OSError,
+    ValueError,
+    ParseError,
+    EOFError,
+    KeyError,
+)
+
 
 class XlsxFormatError(ValueError):
     """Raised when a workbook cannot provide the required import structure."""
@@ -29,12 +40,11 @@ def iter_xlsx_rows(
     if path.suffix.lower() != ".xlsx":
         raise XlsxFormatError("Only .xlsx files are supported.")
 
+    source = None
+    workbook = None
     try:
-        workbook = load_workbook(path, read_only=True, data_only=True)
-    except (BadZipFile, InvalidFileException, OSError, ValueError) as exc:
-        raise XlsxFormatError(f"Cannot read XLSX file: {exc}") from exc
-
-    try:
+        source = path.open("rb")
+        workbook = load_workbook(source, read_only=True, data_only=True)
         rows = workbook.active.iter_rows(values_only=True)
         try:
             header_row = next(rows)
@@ -51,8 +61,15 @@ def iter_xlsx_rows(
                 header: values[position] if position < len(values) else None
                 for header, position in header_positions.items()
             }
+    except XlsxFormatError:
+        raise
+    except WORKBOOK_READ_ERRORS as exc:
+        raise XlsxFormatError(f"Cannot read XLSX file: {exc}") from exc
     finally:
-        workbook.close()
+        if workbook is not None:
+            workbook.close()
+        if source is not None:
+            source.close()
 
 
 def build_mailing_message(row_data: Mapping[str, object]) -> MailingMessage:
