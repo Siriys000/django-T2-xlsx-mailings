@@ -9,7 +9,6 @@ from mailings.models import MailingMessage
 from mailings.tests.xlsx_helpers import corrupt_worksheet_xml, write_workbook
 from mailings.xlsx import XlsxFormatError, build_mailing_message, iter_xlsx_rows
 
-
 HEADERS = ["external_id", "user_id", "email", "subject", "message"]
 
 
@@ -77,9 +76,7 @@ class XlsxReaderTests(SimpleTestCase):
         self.assertEqual(rows[0][0], 3)
 
     def test_rejects_missing_required_headers(self):
-        path = self.write_workbook(
-            [["external_id", "user_id", "email", "subject"]]
-        )
+        path = self.write_workbook([["external_id", "user_id", "email", "subject"]])
 
         with self.assertRaisesRegex(XlsxFormatError, "message"):
             list(iter_xlsx_rows(path))
@@ -104,9 +101,7 @@ class XlsxReaderTests(SimpleTestCase):
         workbook.active.append(["not", "the", "required", "headers"])
         worksheet = workbook.create_sheet("Mailings")
         worksheet.append(HEADERS)
-        worksheet.append(
-            ["mailing-001", 42, "user@example.com", "Subject", "Message"]
-        )
+        worksheet.append(["mailing-001", 42, "user@example.com", "Subject", "Message"])
         workbook.active = 1
         workbook.save(path)
         workbook.close()

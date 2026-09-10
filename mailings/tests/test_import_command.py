@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
 from django.test import TestCase
+
 from mailings.models import MailingMessage
 from mailings.tests.xlsx_helpers import corrupt_worksheet_xml, write_workbook
-
 
 HEADERS = ["external_id", "user_id", "email", "subject", "message"]
 
@@ -45,9 +45,7 @@ class ImportMailingsCommandTests(TestCase):
         stdout, stderr = self.run_command(path)
 
         self.assertEqual(MailingMessage.objects.count(), 2)
-        sent_messages = [
-            call.args[0] for call in self.mocked_send_email.call_args_list
-        ]
+        sent_messages = [call.args[0] for call in self.mocked_send_email.call_args_list]
         self.assertEqual(
             [mailing.external_id for mailing in sent_messages],
             ["mailing-001", "mailing-002"],

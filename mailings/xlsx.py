@@ -57,10 +57,13 @@ def iter_xlsx_rows(
             if _is_blank_row(values):
                 continue
 
-            yield row_number, {
-                header: values[position] if position < len(values) else None
-                for header, position in header_positions.items()
-            }
+            yield (
+                row_number,
+                {
+                    header: values[position] if position < len(values) else None
+                    for header, position in header_positions.items()
+                },
+            )
     except XlsxFormatError:
         raise
     except WORKBOOK_READ_ERRORS as exc:
