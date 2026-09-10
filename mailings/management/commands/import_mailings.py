@@ -3,6 +3,7 @@ from pathlib import Path
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
+from mailings.delivery import send_email
 from mailings.models import MailingMessage
 from mailings.xlsx import XlsxFormatError, build_mailing_message, iter_xlsx_rows
 
@@ -37,7 +38,7 @@ class Command(BaseCommand):
                     )
                     continue
 
-                _, was_created = MailingMessage.objects.get_or_create(
+                stored_mailing, was_created = MailingMessage.objects.get_or_create(
                     external_id=mailing.external_id,
                     defaults={
                         "user_id": mailing.user_id,
@@ -48,6 +49,7 @@ class Command(BaseCommand):
                 )
                 if was_created:
                     created += 1
+                    send_email(stored_mailing)
                 else:
                     skipped += 1
         except XlsxFormatError as exc:

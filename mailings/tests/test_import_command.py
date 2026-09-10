@@ -1,6 +1,7 @@
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
 from django.test import TestCase
@@ -16,6 +17,11 @@ class ImportMailingsCommandTests(TestCase):
     def setUp(self):
         self.temp_directory = TemporaryDirectory()
         self.addCleanup(self.temp_directory.cleanup)
+        send_email_patcher = patch(
+            "mailings.management.commands.import_mailings.send_email"
+        )
+        self.mocked_send_email = send_email_patcher.start()
+        self.addCleanup(send_email_patcher.stop)
 
     def write_workbook(self, rows):
         path = Path(self.temp_directory.name) / "mailings.xlsx"
@@ -45,6 +51,14 @@ class ImportMailingsCommandTests(TestCase):
         stdout, stderr = self.run_command(path)
 
         self.assertEqual(MailingMessage.objects.count(), 2)
+        sent_messages = [
+            call.args[0] for call in self.mocked_send_email.call_args_list
+        ]
+        self.assertEqual(
+            [mailing.external_id for mailing in sent_messages],
+            ["mailing-001", "mailing-002"],
+        )
+        self.assertTrue(all(mailing.pk for mailing in sent_messages))
         self.assertEqual(stderr, "")
         self.assertIn(
             "Import completed: processed=2, created=2, skipped=0, errors=0",
@@ -79,6 +93,7 @@ class ImportMailingsCommandTests(TestCase):
         self.assertEqual(existing.email, "original@example.com")
         self.assertEqual(existing.subject, "Original")
         self.assertEqual(existing.message, "Original message")
+        self.mocked_send_email.assert_not_called()
         self.assertIn("processed=1, created=0, skipped=1, errors=0", stdout)
 
     def test_duplicate_inside_file_is_created_once(self):
@@ -94,6 +109,7 @@ class ImportMailingsCommandTests(TestCase):
 
         mailing = MailingMessage.objects.get()
         self.assertEqual(mailing.email, "one@example.com")
+        self.mocked_send_email.assert_called_once_with(mailing)
         self.assertIn("processed=2, created=1, skipped=1, errors=0", stdout)
 
     def test_invalid_row_does_not_stop_import_or_expose_message(self):
@@ -115,6 +131,7 @@ class ImportMailingsCommandTests(TestCase):
 
         mailing = MailingMessage.objects.get()
         self.assertEqual(mailing.external_id, "mailing-002")
+        self.mocked_send_email.assert_called_once_with(mailing)
         self.assertIn("processed=2, created=1, skipped=0, errors=1", stdout)
         self.assertIn("Row 2", stderr)
         self.assertIn("email", stderr)
@@ -132,6 +149,7 @@ class ImportMailingsCommandTests(TestCase):
             self.run_command(path)
 
         self.assertFalse(MailingMessage.objects.exists())
+        self.mocked_send_email.assert_not_called()
 
     def test_corrupted_workbook_raises_command_error(self):
         path = Path(self.temp_directory.name) / "mailings.xlsx"
@@ -141,3 +159,4 @@ class ImportMailingsCommandTests(TestCase):
             self.run_command(path)
 
         self.assertFalse(MailingMessage.objects.exists())
+        self.mocked_send_email.assert_not_called()
