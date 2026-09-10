@@ -95,6 +95,15 @@ Import completed: processed=10, created=7, skipped=2, errors=1
 [docs/import-contract.md](docs/import-contract.md), а осознанные ограничения и
 альтернативы — в [docs/design-tradeoffs.md](docs/design-tradeoffs.md).
 
+## Расширенный вариант
+
+Отдельная ветка
+[`codex/extended-delivery`](https://github.com/Siriys000/django-T2-xlsx-mailings/tree/codex/extended-delivery)
+демонстрирует состояния доставки, сохранение результатов попыток, ограниченные
+повторные попытки, пакетную параллельную отправку и команду восстановления
+`retry_mailings`. Расширение не объединено с `main`, чтобы основная ветка
+оставалась минимальным и буквальным решением ТЗ.
+
 ## Тесты
 
 ```bash
